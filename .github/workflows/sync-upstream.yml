@@ -1,0 +1,58 @@
+name: sync-upstream
+
+# 每晚自动将上游最新代码同步到本 fork
+#   上游：linguo2625469/workbuddy2api-panel（私有）
+#   时间：每天 22:00 北京时间（UTC+8）= 14:00 UTC
+#   依赖：Secrets.UPSTREAM_TOKEN —— 有权限读取上游私有仓库的令牌
+#   （由 Minis 于 2026-10-02 自动配置；令牌失效时同步会失败并收到邮件通知）
+# 手动触发：Actions → sync-upstream → Run workflow
+on:
+  schedule:
+    - cron: "0 14 * * *" # 22:00 Asia/Shanghai
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync main from upstream
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream & fast-forward (or merge)
+        env:
+          TOKEN: ${{ secrets.UPSTREAM_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream "https://x-access-token:${TOKEN}@github.com/linguo2625469/workbuddy2api-panel.git"
+          git fetch upstream main --prune
+
+          if [ -z "$(git log HEAD..upstream/main --oneline)" ]; then
+            echo "✅ 上游没有新提交，本次无需同步"
+            exit 0
+          fi
+
+          LOCAL=$(git rev-list --count upstream/main..HEAD)
+          if [ "$LOCAL" = "0" ]; then
+            echo "⬆️ 快进合并上游新提交：$(git rev-list --count HEAD..upstream/main) 个"
+            git merge --ff-only upstream/main
+          else
+            echo "⚠️ 本 fork 有 $LOCAL 个本地提交，执行普通合并（如有冲突需手动处理）"
+            git merge upstream/main -m "chore: merge upstream into main ($(date -u '+%Y-%m-%d'))"
+          fi
+
+          git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
+          echo "🚀 同步完成 → ${GITHUB_REPOSITORY}@${GITHUB_REF_NAME}"
